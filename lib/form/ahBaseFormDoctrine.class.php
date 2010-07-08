@@ -273,18 +273,48 @@ abstract class ahBaseFormDoctrine extends sfFormDoctrine
 
       if (isset($values[$relationName]))
       {
-        $oneToOneRelationFix = $this->getObject()->getTable()->getRelation($relationName)->isOneToOne() ? array($values[$relationName]) : $values[$relationName];
-        foreach ($oneToOneRelationFix as $i => $relationValues)
-        {
-          if (isset($relationValues['delete_object']) && $relationValues['id'])
-          {
-            $this->scheduledForDeletion[$relationName][$i] = $relationValues['id'];
-          }
-        }
+        $values[$relationName] = $this->processDeletionsForRelation($relationName, $values[$relationName]);
       }
     }
-
     parent::doBind($values);
+  }
+
+  /**
+   * Checks if relation should be deleted, schedules it if so and returns relation values to be bound
+   * @param string $relationName
+   * @param array $relationValues
+   * @param int $offset object offset in given relation
+   * @return array
+   * @internal
+   */
+  protected function processSingleDeletion($relationName, $relationValues, $offset) {
+    if (isset($relationValues['delete_object']) && !empty($relationValues['id']))
+    {
+      $this->scheduledForDeletion[$relationName][$offset] = $relationValues['id'];
+      // we may alter the values here to make them pass the object validators as the object will be deleted
+    }
+    return $relationValues;
+  }
+
+  /**
+   * Processes deletions scheduling for a given relation
+   * @param $relationName
+   * @param array $values
+   * @return array mofified values (acts as a filter)
+   */
+  protected function processDeletionsForRelation($relationName, $values) {
+    if ($this->getObject()->getTable()->getRelation($relationName)->isOneToOne())
+    {
+      return $this->processSingleDeletion($relationName, $values, 0);
+    }
+    else
+    {
+      foreach ($values as $i => $relationValues)
+      {
+        $values[$i] = $this->processSingleDeletion($relationName, $relationValues, $i);
+      }
+    }
+    return $values;
   }
 
   /**
