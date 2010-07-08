@@ -40,121 +40,136 @@ abstract class ahBaseFormDoctrine extends sfFormDoctrine
     return array_merge($this->defaultRelationSettings, $settings);
   }
 
-  public function embedRelations(array $relations)
+  public function addEmbeddedRelation($relationName, $relationSettings)
   {
-    $this->embedRelations = $relations;
+    if (array_key_exists($relationName, $this->embedRelations))
+    {
+      throw new LogicException("Relation $relationName has already been bound.");
+    }
+
+    $relationSettings = $this->addDefaultRelationSettings($relationSettings);
+    $this->embedRelations[$relationName] = $relationSettings;
 
     $this->getEventDispatcher()->connect('form.post_configure', array($this, 'listenToFormPostConfigureEvent'));
 
-    foreach ($relations as $relationName => $relationSettings)
+    $relation = $this->getObject()->getTable()->getRelation($relationName);
+    if (!$relationSettings['noNewForm'])
     {
-      $relationSettings = $this->addDefaultRelationSettings($relationSettings);
-
-      $relation = $this->getObject()->getTable()->getRelation($relationName);
-      if (!$relationSettings['noNewForm'])
+      $containerName = 'new_'.$relationName;
+      $formLabel = $relationSettings['newFormLabel'];
+      if (!$relation->isOneToOne())
       {
-        $containerName = 'new_'.$relationName;
-        $formLabel = $relationSettings['newFormLabel'];
-        if (!$relation->isOneToOne())
+        if ($relationSettings['multipleNewForms']) // allow multiple new forms for this relation
         {
-          if ($relationSettings['multipleNewForms']) // allow multiple new forms for this relation
-          {
-            $newFormsCount = $relationSettings['newFormsInitialCount'];
+          $newFormsCount = $relationSettings['newFormsInitialCount'];
 
-            $subForm = $this->newFormsContainerFormFactory($relationSettings, $containerName);
-            for ($i = 0; $i < $newFormsCount; $i++)
-            {
-              // we need to create new forms with cloned object inside (otherwise only the last new values would be saved)
-              $newForm = $this->embeddedFormFactory($relationName, $relationSettings, $relation, $i + 1);
-              $subForm->embedForm($i, $newForm);
-            }
-            $subForm->getWidgetSchema()->setLabel($formLabel);
-            $this->embedForm($containerName, $subForm);
-          }
-          else // just a single new form for this relation
+          $subForm = $this->newFormsContainerFormFactory($relationSettings, $containerName);
+          for ($i = 0; $i < $newFormsCount; $i++)
           {
-            $newForm = $this->embeddedFormFactory($relationName, $relationSettings, $relation, $formLabel);
-            $this->embedForm($containerName, $newForm);
+            // we need to create new forms with cloned object inside (otherwise only the last new values would be saved)
+            $newForm = $this->embeddedFormFactory($relationName, $relationSettings, $relation, $i + 1);
+            $subForm->embedForm($i, $newForm);
           }
+          $subForm->getWidgetSchema()->setLabel($formLabel);
+          $this->embedForm($containerName, $subForm);
         }
-        elseif ($relation->isOneToOne() && !$this->getObject()->relatedExists($relationName))
+        else // just a single new form for this relation
         {
           $newForm = $this->embeddedFormFactory($relationName, $relationSettings, $relation, $formLabel);
           $this->embedForm($containerName, $newForm);
         }
       }
-
-      $formClass = (null === $relationSettings['formClass']) ? $relation->getClass().'Form' : $relationSettings['formClass'];
-      $formArgs = (null === $relationSettings['formClassArgs']) ? array() : $relationSettings['formClassArgs'];
-      if ((isset($formArgs[0]) && !array_key_exists('ah_add_delete_checkbox', $formArgs[0])) || !isset($formArgs[0]))
+      elseif ($relation->isOneToOne() && !$this->getObject()->relatedExists($relationName))
       {
-        $formArgs[0]['ah_add_delete_checkbox'] = true;
-      }
-
-      if ($relation->isOneToOne())
-      {
-        $form = new $formClass($this->getObject()->$relationName, $formArgs[0]);
-        $this->embedForm($relationName, $form);
-
-        //maybe we need this: if (!$this->getObject()->relatedExists($relationName))
-        unset($this[$relation->getLocalColumnName()]);
-      }
-      else
-      {
-        $subForm = new sfForm();
-
-        foreach ($this->getObject()->$relationName as $index => $childObject)
-        {
-          $form = new $formClass($childObject, $formArgs[0]);
-
-          $subForm->embedForm($index, $form);
-          // check if existing embedded relations should have a different label
-          if (null === $relationSettings['customEmbeddedFormLabelMethod'] || !method_exists($childObject, $relationSettings['customEmbeddedFormLabelMethod']))
-          {
-            $subForm->getWidgetSchema()->setLabel($index, (string)$childObject);
-          }
-          else
-          {
-            $subForm->getWidgetSchema()->setLabel($index, $childObject->$relationSettings['customEmbeddedFormLabelMethod']());
-          }
-        }
-
-        $this->embedForm($relationName, $subForm);
-      }
-
-      if ($relationSettings['formFormatter']) // switch formatter
-      {
-        $this->switchFormatter($relationName, $relationSettings['formFormatter']);
-      }
-
-      /*
-       * Unset the relation form(s) if:
-       * (1. One-to-many relation and there are no related objects yet (count of embedded forms is 0) OR
-       * 2. One-to-one relation and embedded form is new (no related object yet))
-       * AND
-       * (3. Option `displayEmptyRelations` was either not set by the user or was set by the user and is false)
-       */
-      if (
-        (
-          (!$relation->isOneToOne() && count($this->getEmbeddedForm($relationName)->getEmbeddedForms()) === 0) ||
-          ($relation->isOneToOne() && $this->getEmbeddedForm($relationName)->isNew())
-        ) &&
-        !$relationSettings['displayEmptyRelations']
-      )
-      {
-        unset($this[$relationName]);
-      }
-
-      if (
-        $relationSettings['newFormAfterExistingRelations'] &&
-        isset($this[$relationName]) && isset($this['new_'.$relationName])
-      )
-      {
-        $this->getWidgetSchema()->moveField('new_'.$relationName, sfWidgetFormSchema::AFTER, $relationName);
+        $newForm = $this->embeddedFormFactory($relationName, $relationSettings, $relation, $formLabel);
+        $this->embedForm($containerName, $newForm);
       }
     }
 
+    $formClass = (null === $relationSettings['formClass']) ? $relation->getClass().'Form' : $relationSettings['formClass'];
+    $formArgs = (null === $relationSettings['formClassArgs']) ? array() : $relationSettings['formClassArgs'];
+    if ((isset($formArgs[0]) && !array_key_exists('ah_add_delete_checkbox', $formArgs[0])) || !isset($formArgs[0]))
+    {
+      $formArgs[0]['ah_add_delete_checkbox'] = true;
+    }
+
+    if ($relation->isOneToOne())
+    {
+      $form = new $formClass($this->getObject()->$relationName, $formArgs[0]);
+      $this->embedForm($relationName, $form);
+
+      //maybe we need this: if (!$this->getObject()->relatedExists($relationName))
+      unset($this[$relation->getLocalColumnName()]);
+    }
+    else
+    {
+      $subForm = new sfForm();
+
+      foreach ($this->getObject()->$relationName as $index => $childObject)
+      {
+        $form = new $formClass($childObject, $formArgs[0]);
+
+        $subForm->embedForm($index, $form);
+        // check if existing embedded relations should have a different label
+        if (null === $relationSettings['customEmbeddedFormLabelMethod'] || !method_exists($childObject, $relationSettings['customEmbeddedFormLabelMethod']))
+        {
+          $subForm->getWidgetSchema()->setLabel($index, (string)$childObject);
+        }
+        else
+        {
+          $subForm->getWidgetSchema()->setLabel($index, $childObject->$relationSettings['customEmbeddedFormLabelMethod']());
+        }
+      }
+
+      $this->embedForm($relationName, $subForm);
+    }
+
+    if ($relationSettings['formFormatter']) // switch formatter
+    {
+      $this->switchFormatter($relationName, $relationSettings['formFormatter']);
+    }
+
+    /*
+     * Unset the relation form(s) if:
+     * (1. One-to-many relation and there are no related objects yet (count of embedded forms is 0) OR
+     * 2. One-to-one relation and embedded form is new (no related object yet))
+     * AND
+     * (3. Option `displayEmptyRelations` was either not set by the user or was set by the user and is false)
+     */
+    if (
+      (
+        (!$relation->isOneToOne() && count($this->getEmbeddedForm($relationName)->getEmbeddedForms()) === 0) ||
+        ($relation->isOneToOne() && $this->getEmbeddedForm($relationName)->isNew())
+      ) &&
+      !$relationSettings['displayEmptyRelations']
+    )
+    {
+      unset($this[$relationName]);
+    }
+
+    if (
+      $relationSettings['newFormAfterExistingRelations'] &&
+      isset($this[$relationName]) && isset($this['new_'.$relationName])
+    )
+    {
+      $this->getWidgetSchema()->moveField('new_'.$relationName, sfWidgetFormSchema::AFTER, $relationName);
+    }
+
     $this->getEventDispatcher()->disconnect('form.post_configure', array($this, 'listenToFormPostConfigureEvent'));
+
+  }
+
+  public function embedRelations(array $relations)
+  {
+    if (!empty($this->embedRelations))
+    {
+      throw new LogicException("Relations have already been bound.");
+    }
+
+    foreach ($relations as $relationName => $relationSettings)
+    {
+        $this->addEmbeddedRelation($relationName, $relationSettings);
+    }
   }
 
   protected function switchFormatter($subFormName, $formatter) {
@@ -193,8 +208,6 @@ abstract class ahBaseFormDoctrine extends sfFormDoctrine
   {
     foreach ($this->embedRelations as $relationName => $keys)
     {
-      $keys = $this->addDefaultRelationSettings($keys);
-
       if (!$keys['noNewForm'])
       {
         $containerName = 'new_'.$relationName;
@@ -431,7 +444,6 @@ abstract class ahBaseFormDoctrine extends sfFormDoctrine
         $emptyFields++;
       }
     }
-
     if ($emptyFields === count($keys['considerNewFormEmptyFields']))
     {
       return true;
