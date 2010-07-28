@@ -290,8 +290,12 @@ abstract class ahBaseFormDoctrine extends sfFormDoctrine
   protected function processSingleDeletion($relationName, $relationValues, $offset) {
     if (isset($relationValues['delete_object']) && !empty($relationValues['id']))
     {
+      // skip validation for this object
+      $validator = $this->getValidatorSchema();
+      $validator[$relationName][$offset] = new sfValidatorPass();
       $this->scheduledForDeletion[$relationName][$offset] = $relationValues['id'];
       // we may alter the values here to make them pass the object validators as the object will be deleted
+      $relationValues = array();
     }
     return $relationValues;
   }
